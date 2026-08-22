@@ -1,0 +1,50 @@
+# =============================================================
+# Makefile.mingw — Windows (MinGW-w64 / MSYS2)
+#
+# Compila grx_core.c DIRECTAMENTE en lib/grx/ (sin archivo intermedio).
+# El único .dll vive en lib/grx/grx_core.dll
+#
+# Requisitos:
+#   MSYS2: pacman -S mingw-w64-x86_64-gcc
+#
+# Uso:
+#   make -f Makefile.mingw          → compila
+#   make -f Makefile.mingw clean    → elimina el .dll de lib/grx/
+# =============================================================
+
+CC      = x86_64-w64-mingw32-gcc
+CFLAGS  = -O3 -march=native -ffast-math -funroll-loops \
+          -Wall -Wextra -std=c11
+LDFLAGS = -lm
+SRC_DIR = ../grx
+SRC     = $(SRC_DIR)/grx_core.c
+HEADER  = $(SRC_DIR)/grx_core.h
+
+# Destino final — directamente en lib/grx/
+OUT_DIR = ../../lib/grx
+LIB     = grx_core.dll
+TARGET  = $(OUT_DIR)/$(LIB)
+
+# __declspec(dllexport) ya está en el header vía GRX_API
+SHARED  = -shared -Wl,--out-implib,$(OUT_DIR)/libgrx_core.a
+
+AVX2_TEST := $(shell echo 'int main(){}' | $(CC) -mavx2 -mfma -x c - -o NUL 2>&1)
+ifeq ($(AVX2_TEST),)
+    CFLAGS += -mavx2 -mfma
+    $(info [GRX] AVX2 + FMA habilitados)
+else
+    $(info [GRX] Sin AVX2 — modo escalar)
+endif
+
+.PHONY: all clean
+
+all: $(TARGET)
+
+$(TARGET): $(SRC) $(HEADER)
+	mkdir -p $(OUT_DIR)
+	$(CC) $(CFLAGS) $(SHARED) $(SRC) -o $(TARGET) $(LDFLAGS)
+	@echo [GRX] Compilado → $(TARGET)
+
+clean:
+	rm -f "$(TARGET)" "$(OUT_DIR)/libgrx_core.a" 2>/dev/null || true
+	@echo [GRX] Limpiado: $(TARGET)
