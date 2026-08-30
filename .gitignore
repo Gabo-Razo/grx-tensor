@@ -91,7 +91,12 @@ coverage/
 .byebug_history
 
 # -------------------------------------------------------------
-# Advanced tests and interactive scratch demos
+# Advanced tests, scratch demos and skill definitions
 # -------------------------------------------------------------
 test_advanced/
 *.grx
+SKILL.md
+skills/
+skill/
+.agents/
+grx-tensor/

@@ -147,21 +147,94 @@ flowchart TD
 
 ---
 
-## Instalacion
+## Instalacion y Configuracion del Entorno
 
-### Instalacion Estandar con RubyGems
+GRTensor requiere Ruby ($\ge 3.0$) y herramientas de compilacion en C (`gcc`, `make` y cabeceras de desarrollo de Ruby) para compilar el nucleo de aceleracion SIMD nativo.
+
+### 1. Instalar Ruby y Dependencias de Compilacion por Sistema Operativo / Distribucion
+
+#### Debian, Ubuntu, Linux Mint, Pop!_OS, Kali Linux
+```bash
+sudo apt update
+sudo apt install -y ruby-full ruby-dev build-essential make gcc
+```
+
+#### Fedora, Red Hat Enterprise Linux (RHEL), CentOS, Rocky Linux, AlmaLinux
+* **Fedora:**
+  ```bash
+  sudo dnf install -y ruby ruby-devel gcc make redhat-rpm-config
+  ```
+* **RHEL / CentOS / Rocky Linux / AlmaLinux:**
+  ```bash
+  sudo dnf install -y epel-release
+  sudo dnf groupinstall -y "Development Tools"
+  sudo dnf install -y ruby ruby-devel
+  ```
+
+#### Arch Linux, Manjaro, EndeavourOS
+```bash
+sudo pacman -Syu --noconfirm ruby base-devel
+```
+
+#### openSUSE / SUSE Linux Enterprise
+```bash
+sudo zypper refresh
+sudo zypper install -y ruby ruby-devel gcc make
+```
+
+#### macOS (Homebrew)
+```bash
+brew install ruby
+# Asegura que el Ruby de Homebrew este en tu PATH:
+echo 'export PATH="$(brew --prefix ruby)/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+#### Windows (PowerShell / Simbolo del Sistema)
+* **Opcion A: Mediante Windows Terminal / PowerShell con `winget` (Recomendado):**
+  ```powershell
+  winget install RubyInstallerTeam.RubyWithDevKit.3.3
+  ```
+  *Al finalizar la instalacion, abre una nueva ventana de PowerShell y completa el toolchain MSYS2 DevKit:*
+  ```powershell
+  ridk install 3
+  ```
+* **Opcion B: Mediante Chocolatey:**
+  ```powershell
+  choco install ruby --version=3.3.0 -y
+  ridk install 3
+  ```
+* **Opcion C: Instalador Web Directo (GUI):**
+  1. Descarga el instalador **Ruby+Devkit** (x64) mas reciente desde [https://rubyinstaller.org/downloads/](https://rubyinstaller.org/downloads/).
+  2. Sigue el asistente de instalacion y asegurate de marcar la casilla para instalar el **toolchain MSYS2 DevKit**.
+
+---
+
+### 2. Instalar la Gema `grx-tensor`
+
+Una vez instalado Ruby, ejecuta en tu terminal:
 
 ```bash
 gem install grx-tensor
 ```
 
-O agregalo al `Gemfile` de tu proyecto:
+O agregalo al `Gemfile` de tu aplicacion:
 
 ```ruby
-gem "grx-tensor"
+gem "grx-tensor", "~> 0.2.1"
 ```
 
 La extension nativa en C se compila y enlaza de forma automatica y transparente durante la instalacion.
+
+---
+
+### 3. Verificar la Instalacion
+
+Ejecuta esta linea de comprobacion en tu terminal:
+
+```bash
+ruby -e 'require "grx"; puts "GRTensor #{GRX::VERSION} esta listo en modo: #{GRX.simd_mode}"'
+```
 
 ---
 

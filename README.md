@@ -149,21 +149,94 @@ flowchart TD
 
 ---
 
-## Installation
+## Installation & Environment Setup
 
-### Standard RubyGems Installation
+GRTensor requires Ruby ($\ge 3.0$) and basic C build tools (`gcc`, `make`, and Ruby development headers) to compile the native SIMD acceleration core.
+
+### 1. Install Ruby & Build Dependencies by OS / Distro
+
+#### Debian, Ubuntu, Linux Mint, Pop!_OS, Kali Linux
+```bash
+sudo apt update
+sudo apt install -y ruby-full ruby-dev build-essential make gcc
+```
+
+#### Fedora, Red Hat Enterprise Linux (RHEL), CentOS, Rocky Linux, AlmaLinux
+* **Fedora:**
+  ```bash
+  sudo dnf install -y ruby ruby-devel gcc make redhat-rpm-config
+  ```
+* **RHEL / CentOS / Rocky Linux / AlmaLinux:**
+  ```bash
+  sudo dnf install -y epel-release
+  sudo dnf groupinstall -y "Development Tools"
+  sudo dnf install -y ruby ruby-devel
+  ```
+
+#### Arch Linux, Manjaro, EndeavourOS
+```bash
+sudo pacman -Syu --noconfirm ruby base-devel
+```
+
+#### openSUSE / SUSE Linux Enterprise
+```bash
+sudo zypper refresh
+sudo zypper install -y ruby ruby-devel gcc make
+```
+
+#### macOS (Homebrew)
+```bash
+brew install ruby
+# Ensure Homebrew Ruby is in your PATH:
+echo 'export PATH="$(brew --prefix ruby)/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+#### Windows (PowerShell / Command Prompt)
+* **Option A: Via Windows Terminal / PowerShell with `winget` (Recommended):**
+  ```powershell
+  winget install RubyInstallerTeam.RubyWithDevKit.3.3
+  ```
+  *After installation, open a new PowerShell and complete the MSYS2 DevKit setup:*
+  ```powershell
+  ridk install 3
+  ```
+* **Option B: Via Chocolatey:**
+  ```powershell
+  choco install ruby --version=3.3.0 -y
+  ridk install 3
+  ```
+* **Option C: Direct Web Installer (GUI):**
+  1. Download the latest **Ruby+Devkit** (x64) installer from [https://rubyinstaller.org/downloads/](https://rubyinstaller.org/downloads/).
+  2. Follow the setup wizard and ensure the **MSYS2 DevKit toolchain** is selected.
+
+---
+
+### 2. Install the `grx-tensor` Gem
+
+Once Ruby is installed, run:
 
 ```bash
 gem install grx-tensor
 ```
 
-Or add it to your project's `Gemfile`:
+Or add it to your application's `Gemfile`:
 
 ```ruby
-gem "grx-tensor"
+gem "grx-tensor", "~> 0.2.1"
 ```
 
 The native C extension is automatically compiled and linked in the background during installation.
+
+---
+
+### 3. Verify Your Installation
+
+Run the one-liner sanity check in your terminal:
+
+```bash
+ruby -e 'require "grx"; puts "GRTensor #{GRX::VERSION} is ready on mode: #{GRX.simd_mode}"'
+```
 
 ---
 

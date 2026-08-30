@@ -53,13 +53,86 @@ Por otro lado, C ofrece velocidad extrema, pero programar grafos de autograd y r
 - **Ruby habla:** Escribes codigo fluido, declarativo y limpio para definir arquitecturas, procesar datos y crear aplicaciones.
 - **C calcula:** Cada operacion matematica, producto matricial, retropropagacion y actualizacion de pesos se ejecuta en un buffer nativo de C con aceleracion vectorial **SIMD multi-target (AVX2 + FMA, SSE y C escalar)**.
 
-### Instalacion y Compatibilidad de Hardware Universal
-1. **Instalacion 100% automatica:** Al instalar con `gem install grx-tensor`, RubyGems compila y enlaza automaticamente la extension nativa de C en segundo plano sin requerir comandos de compilacion manuales.
-2. **Despacho Dinamico por CPU:** El motor en C detecta en tiempo real las caracteristicas de tu procesador:
-   - Si tu procesador soporta **AVX2 + FMA**, activa la maxima aceleracion vectorial (4 doubles/ciclo).
-   - Si tu procesador soporta **SSE**, activa las instrucciones vectoriales SSE.
-   - Si tu maquina es ARM, una maquina virtual o una CPU clasica, conmuta a **C escalar**, evitando cualquier error de "instruccion ilegal".
-3. **Estado del Soporte en Windows:** En Windows, la aceleracion nativa funciona compilando automaticamente mediante **RubyInstaller con DevKit (MSYS2 / MinGW-w64)**. Si no hay compilador presente, el framework corre en modo fallback de Ruby puro de forma segura. El empaquetado de binarios pre-compilados (.dll) sin necesidad de DevKit se encuentra en desarrollo activo.
+### Como Instalar Ruby y Herramientas de Compilacion por Sistema Operativo
+
+Antes de instalar GRTensor, necesitas tener Ruby instalado ($\ge 3.0$) junto con las herramientas de compilacion de C (`gcc`, `make` y cabeceras `ruby-dev`):
+
+#### 1. Debian, Ubuntu, Linux Mint, Pop!_OS, Kali Linux
+```bash
+sudo apt update
+sudo apt install -y ruby-full ruby-dev build-essential make gcc
+```
+
+#### 2. Fedora, Red Hat Enterprise Linux (RHEL), CentOS, Rocky Linux, AlmaLinux
+* **Fedora:**
+  ```bash
+  sudo dnf install -y ruby ruby-devel gcc make redhat-rpm-config
+  ```
+* **RHEL / CentOS / Rocky / AlmaLinux:**
+  ```bash
+  sudo dnf install -y epel-release
+  sudo dnf groupinstall -y "Development Tools"
+  sudo dnf install -y ruby ruby-devel
+  ```
+
+#### 3. Arch Linux, Manjaro, EndeavourOS
+```bash
+sudo pacman -Syu --noconfirm ruby base-devel
+```
+
+#### 4. openSUSE / SUSE Linux Enterprise
+```bash
+sudo zypper refresh
+sudo zypper install -y ruby ruby-devel gcc make
+```
+
+#### 5. macOS (Homebrew)
+```bash
+brew install ruby
+# Configurar PATH en zshrc:
+echo 'export PATH="$(brew --prefix ruby)/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+#### 6. Windows (PowerShell / Consola de Comandos)
+* **Opcion A: Desde la consola con `winget` (Recomendado en Windows 10/11):**
+  ```powershell
+  winget install RubyInstallerTeam.RubyWithDevKit.3.3
+  ```
+  *Al finalizar, abre una nueva ventana de PowerShell y ejecuta:*
+  ```powershell
+  ridk install 3
+  ```
+* **Opcion B: Desde la consola con `choco` (Chocolatey):**
+  ```powershell
+  choco install ruby --version=3.3.0 -y
+  ridk install 3
+  ```
+* **Opcion C: Descarga Directa (Instalador Grafico .exe):**
+  1. Descarga el paquete **Ruby+Devkit** (x64) desde [https://rubyinstaller.org/downloads/](https://rubyinstaller.org/downloads/).
+  2. En el instalador, marca la opcion para instalar el **toolchain MSYS2 DevKit**.
+
+---
+
+### Instalacion de la Gema GRTensor
+
+Una vez instalado Ruby:
+
+```bash
+gem install grx-tensor
+```
+
+O si usas Bundler en tu proyecto, agrega a tu `Gemfile`:
+
+```ruby
+gem "grx-tensor", "~> 0.2.1"
+```
+
+Verifica la instalacion ejecutando en tu terminal:
+
+```bash
+ruby -e 'require "grx"; puts "GRTensor #{GRX::VERSION} listo en modo: #{GRX.simd_mode}"'
+```
 
 ---
 
