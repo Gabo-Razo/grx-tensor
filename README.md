@@ -9,7 +9,7 @@ A high-performance scientific computing, multidimensional tensor, and deep learn
   <a href="https://rubygems.org/gems/grx-tensor"><img src="https://img.shields.io/gem/dt/grx-tensor.svg?color=009688&logo=ruby&logoColor=white" alt="Gem Total Downloads" /></a>
   <a href="https://www.ruby-lang.org"><img src="https://img.shields.io/badge/Ruby-%3E%3D%203.0-CC342D?logo=ruby&logoColor=white" alt="Ruby Version" /></a>
   <a href="LICENSE.txt"><img src="https://img.shields.io/badge/License-MIT-blue.svg?logo=open-source-initiative&logoColor=white" alt="License: MIT" /></a>
-  <a href="https://github.com/Gabo-Razo/grx-tensor"><img src="https://img.shields.io/badge/SIMD-AVX2%20%2B%20FMA%20%7C%20SSE-FF6F00?logo=intel&logoColor=white" alt="Hardware Acceleration" /></a>
+  <a href="https://github.com/Gabo-Razo/grx-tensor"><img src="https://img.shields.io/badge/CPU%20SIMD-AVX2%20%2B%20FMA%20%7C%20SSE%20(Intel%20%26%20AMD)-FF6F00" alt="Hardware Acceleration (Intel & AMD)" /></a>
   <a href="https://github.com/Gabo-Razo/grx-tensor"><img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-555555?logo=linux&logoColor=white" alt="Platforms" /></a>
   <a href="test/test_full.rb"><img src="https://img.shields.io/badge/Tests-112%2F112%20Passing-brightgreen?logo=checkmarx&logoColor=white" alt="Tests" /></a>
 </p>
