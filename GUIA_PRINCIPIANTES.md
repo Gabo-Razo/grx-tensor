@@ -2,6 +2,16 @@
 
 **Aprende computacion tensorial, autograd, redes neuronales, chatbots con memoria, NLP, datasets masivos y despliegue en sistemas reales paso a paso.**
 
+<p align="left">
+  <a href="https://rubygems.org/gems/grx-tensor"><img src="https://img.shields.io/gem/v/grx-tensor.svg?color=E9573F&logo=rubygems&logoColor=white" alt="Version de la Gema" /></a>
+  <a href="https://rubygems.org/gems/grx-tensor"><img src="https://img.shields.io/gem/dt/grx-tensor.svg?color=009688&logo=ruby&logoColor=white" alt="Descargas Totales de la Gema" /></a>
+  <a href="https://www.ruby-lang.org"><img src="https://img.shields.io/badge/Ruby-%3E%3D%203.0-CC342D?logo=ruby&logoColor=white" alt="Version de Ruby" /></a>
+  <a href="LICENSE.txt"><img src="https://img.shields.io/badge/Licencia-MIT-blue.svg?logo=open-source-initiative&logoColor=white" alt="Licencia: MIT" /></a>
+  <a href="https://github.com/Gabo-Razo/grx-tensor"><img src="https://img.shields.io/badge/SIMD-AVX2%20%2B%20FMA%20%7C%20SSE-FF6F00?logo=intel&logoColor=white" alt="Aceleracion de Hardware" /></a>
+  <a href="https://github.com/Gabo-Razo/grx-tensor"><img src="https://img.shields.io/badge/Plataformas-Linux%20%7C%20macOS%20%7C%20Windows-555555?logo=linux&logoColor=white" alt="Plataformas" /></a>
+  <a href="test/test_full.rb"><img src="https://img.shields.io/badge/Tests-112%2F112%20Pasando-brightgreen?logo=checkmarx&logoColor=white" alt="Tests" /></a>
+</p>
+
 ---
 
 ## Tabla de Contenido

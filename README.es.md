@@ -2,11 +2,17 @@
 
 **Ruby habla. C calcula.**
 
-Un framework de computacion cientifica, procesamiento tensorial multidimensional y Deep Learning de alto rendimiento para Ruby. Cuenta con diferenciacion automatica (Autograd), aceleracion de hardware multi-target SIMD dinamica (AVX2+FMA, SSE y escalar C portable), y primitivas completas para redes neuronales, todo respaldado por una API de Ruby limpia, intuitiva y expresiva.
+Un framework de computacion cientifica, procesamiento tensorial multidimensional y Deep Learning de alto rendimiento para Ruby con diferenciacion automatica (Autograd), aceleracion de hardware multi-target SIMD dinamica (AVX2+FMA, SSE y escalar C portable) y primitivas completas para redes neuronales sobre una API limpia y expresiva en Ruby.
 
-[![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.0-CC342D?logo=ruby)](https://www.ruby-lang.org)
-[![Licencia: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE.txt)
-[![Plataforma](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](https://github.com/Gabo-Razo/grx-tensor)
+<p align="left">
+  <a href="https://rubygems.org/gems/grx-tensor"><img src="https://img.shields.io/gem/v/grx-tensor.svg?color=E9573F&logo=rubygems&logoColor=white" alt="Version de la Gema" /></a>
+  <a href="https://rubygems.org/gems/grx-tensor"><img src="https://img.shields.io/gem/dt/grx-tensor.svg?color=009688&logo=ruby&logoColor=white" alt="Descargas Totales de la Gema" /></a>
+  <a href="https://www.ruby-lang.org"><img src="https://img.shields.io/badge/Ruby-%3E%3D%203.0-CC342D?logo=ruby&logoColor=white" alt="Version de Ruby" /></a>
+  <a href="LICENSE.txt"><img src="https://img.shields.io/badge/Licencia-MIT-blue.svg?logo=open-source-initiative&logoColor=white" alt="Licencia: MIT" /></a>
+  <a href="https://github.com/Gabo-Razo/grx-tensor"><img src="https://img.shields.io/badge/SIMD-AVX2%20%2B%20FMA%20%7C%20SSE-FF6F00?logo=intel&logoColor=white" alt="Aceleracion de Hardware" /></a>
+  <a href="https://github.com/Gabo-Razo/grx-tensor"><img src="https://img.shields.io/badge/Plataformas-Linux%20%7C%20macOS%20%7C%20Windows-555555?logo=linux&logoColor=white" alt="Plataformas" /></a>
+  <a href="test/test_full.rb"><img src="https://img.shields.io/badge/Tests-112%2F112%20Pasando-brightgreen?logo=checkmarx&logoColor=white" alt="Tests" /></a>
+</p>
 
 ---
 
