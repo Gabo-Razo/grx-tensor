@@ -36,6 +36,7 @@ section "Tensor creation & factories"
 # ================================================================
 t = GRX.tensor([1.0, 2.0, 3.0, 4.0], [2, 2])
 assert_equal_f "tensor shape",        [2, 2], t.shape
+assert_equal_f "tensor rank",         2,      t.rank
 assert_equal_f "tensor numel",        4,      t.numel
 assert_equal_f "zeros",               [0.0, 0.0, 0.0], GRX.zeros([3]).to_a
 assert_equal_f "ones",                [1.0, 1.0, 1.0], GRX.ones([3]).to_a
@@ -45,6 +46,9 @@ assert_equal_f "rand shape",          [4], GRX.rand([4]).shape
 assert_equal_f "rand in [0,1)",       true, GRX.rand([100]).to_a.all? { |v| v >= 0 && v < 1 }
 assert_equal_f "randn shape",         [4], GRX.randn([4]).shape
 assert_equal_f "item",                5.0, GRX.tensor([5.0], [1]).item
+t_mut = GRX.tensor([1.0, 2.0], [2])
+t_mut.set(1, 99.0)
+assert_equal_f "set method",          99.0, t_mut.get(1)
 
 # ================================================================
 section "Arithmetic — element-wise"
@@ -373,6 +377,21 @@ assert_equal_f "Network trains without error",  true, losses.size == 300
 assert_equal_f "All losses are numbers",         true, losses.all? { |l| (l.is_a?(Float) || l.is_a?(GRX::Tensor)) && !l.nan? }
 assert_equal_f "Loss decreased over 300 steps",  true, losses.last < losses.first
 assert_equal_f "Loss converged (< 1.0)",         true, losses.last < 1.0
+
+# ================================================================
+section "Utilities — Utils"
+# ================================================================
+oh = GRX::Utils.one_hot([0, 2, 1], num_classes: 4)
+assert_equal_f "one_hot shape", [3, 4], oh.shape
+assert_equal_f "one_hot row 0", [1.0, 0.0, 0.0, 0.0], oh.to_a.slice(0, 4)
+assert_equal_f "one_hot row 1", [0.0, 0.0, 1.0, 0.0], oh.to_a.slice(4, 4)
+assert_equal_f "one_hot row 2", [0.0, 1.0, 0.0, 0.0], oh.to_a.slice(8, 4)
+
+p_clip = GRX.tensor([10.0, 20.0], [2], requires_grad: true)
+p_clip.agregar_gradiente(GRX.tensor([30.0, 40.0], [2]))
+clipped_norm = GRX::Utils.clip_grad_norm!([p_clip], 5.0)
+assert_equal_f "clip_grad_norm! total_norm", 50.0, clipped_norm.round(1)
+assert_equal_f "clip_grad_norm! scaled grad", [3.0, 4.0], p_clip.grad.to_a.map(&:round)
 
 # ================================================================
 section "Error handling"

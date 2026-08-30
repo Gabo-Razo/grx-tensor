@@ -1,18 +1,20 @@
 /*
- * grx_core.c — Núcleo C de GRX
- * =============================================================
- * Optimizaciones activas:
- *   - AVX2 + FMA: 4 doubles/ciclo con multiply-add fusionado
- *   - Loop unrolling x2: mayor ILP (Instruction Level Parallelism)
- *   - restrict: elimina alias analysis, permite más vectorización auto
- *   - Memoria alineada 32 bytes: habilita _mm256_load_pd (más rápido que loadu)
- *   - matmul con tiling: respeta líneas de caché L1 (64 bytes = 8 doubles)
- *   - Adam con FMA: beta*m + (1-beta)*grad en una pasada
- * =============================================================
+ * grx_core.c — Nucleo C de GRX con Despacho Dinamico Multi-Target SIMD
+ * ====================================================================
+ * Caracteristicas de compatibilidad y rendimiento:
+ *   - Compilacion base universal (sin banderas forzadas globales -mavx2)
+ *   - Despacho en tiempo de ejecucion segun capacidades reales de la CPU:
+ *       * AVX2 + FMA: 4 doubles/ciclo con multiply-add fusionado
+ *       * Fallback escalar seguro: compatible con 100% de CPUs (x86_64, ARM, VMs)
+ *   - Memoria alineada a 32 bytes: posix_memalign en Unix, _aligned_malloc en Windows
+ *   - Matmul con cache tiling (L1 64 bytes)
+ *   - Optimizadores in-place (SGD, Adam con correccion de sesgo)
+ *   - Generadores de pesos xorshift64 y Box-Muller universales
+ * ====================================================================
  */
 
-#define _USE_MATH_DEFINES   /* M_PI en Windows/MSVC */
-#define _POSIX_C_SOURCE 200809L  /* posix_memalign, M_PI en glibc */
+#define _USE_MATH_DEFINES
+#define _POSIX_C_SOURCE 200809L
 #include "grx_core.h"
 #include <stdlib.h>
 #include <stdint.h>
@@ -25,36 +27,65 @@
   #define M_PI 3.14159265358979323846
 #endif
 
-#if defined(__AVX2__) && defined(__FMA__)
+#if defined(__GNUC__) || defined(__clang__)
+  #define GRX_TARGET_AVX2 __attribute__((target("avx2,fma")))
   #include <immintrin.h>
-  #define GRX_AVX2_FMA 1
-#elif defined(__AVX2__)
-  #include <immintrin.h>
-  #define GRX_AVX2 1
-#elif defined(__SSE2__)
-  #include <emmintrin.h>
-  #define GRX_SSE2 1
+#else
+  #define GRX_TARGET_AVX2
 #endif
 
 #define TILE 8
 
 /* ================================================================
- * MEMORIA
+ * DETECCION DE CPU Y NIVEL SIMD
+ * ================================================================ */
+
+static int g_simd_level = -1;
+
+static int grx_detect_simd(void) {
+    if (__builtin_expect(g_simd_level != -1, 1)) {
+        return g_simd_level;
+    }
+
+#if (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)) && (defined(__GNUC__) || defined(__clang__))
+    __builtin_cpu_init();
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) {
+        g_simd_level = 2; /* AVX2 + FMA */
+        return 2;
+    } else if (__builtin_cpu_supports("sse2")) {
+        g_simd_level = 1; /* SSE2 */
+        return 1;
+    }
+#endif
+
+    g_simd_level = 0; /* Escalar universal */
+    return 0;
+}
+
+GRX_API int grx_simd_level(void) {
+    return grx_detect_simd();
+}
+
+/* ================================================================
+ * GESTION DE MEMORIA
  * ================================================================ */
 
 GRX_API double* grx_alloc(size_t n) {
     if (__builtin_expect(n == 0, 0)) return NULL;
     void *ptr = NULL;
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(_WIN64)
     ptr = _aligned_malloc(n * sizeof(double), 32);
 #else
-    if (posix_memalign(&ptr, 32, n * sizeof(double)) != 0) return NULL;
+    if (posix_memalign(&ptr, 32, n * sizeof(double)) != 0) {
+        ptr = malloc(n * sizeof(double));
+    }
 #endif
     return (double*)ptr;
 }
 
 GRX_API void grx_free(double *ptr) {
-#if defined(_WIN32)
+    if (!ptr) return;
+#if defined(_WIN32) || defined(_WIN64)
     _aligned_free(ptr);
 #else
     free(ptr);
@@ -62,268 +93,370 @@ GRX_API void grx_free(double *ptr) {
 }
 
 /* ================================================================
- * MACROS SIMD INTERNOS
+ * ARITMETICA ELEMENT-WISE: KERNELS AVX2 Y ESCALARES
  * ================================================================ */
 
-/* Carga/store: usa aligned si tenemos AVX2+FMA (memoria siempre alineada a 32b) */
-#ifdef GRX_AVX2_FMA
-  #define VLD(p)      _mm256_load_pd(p)
-  #define VST(p, v)   _mm256_store_pd(p, v)
-#elif defined(GRX_AVX2)
-  #define VLD(p)      _mm256_loadu_pd(p)
-  #define VST(p, v)   _mm256_storeu_pd(p, v)
-#endif
+#if defined(__GNUC__) || defined(__clang__)
+
+GRX_TARGET_AVX2
+static void grx_add_avx2(const double *a, const double *b, double *out, size_t n) {
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        _mm256_storeu_pd(out + i,     _mm256_add_pd(_mm256_loadu_pd(a + i),     _mm256_loadu_pd(b + i)));
+        _mm256_storeu_pd(out + i + 4, _mm256_add_pd(_mm256_loadu_pd(a + i + 4), _mm256_loadu_pd(b + i + 4)));
+    }
+    for (; i + 4 <= n; i += 4) {
+        _mm256_storeu_pd(out + i, _mm256_add_pd(_mm256_loadu_pd(a + i), _mm256_loadu_pd(b + i)));
+    }
+    for (; i < n; i++) out[i] = a[i] + b[i];
+}
+
+GRX_TARGET_AVX2
+static void grx_sub_avx2(const double *a, const double *b, double *out, size_t n) {
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        _mm256_storeu_pd(out + i,     _mm256_sub_pd(_mm256_loadu_pd(a + i),     _mm256_loadu_pd(b + i)));
+        _mm256_storeu_pd(out + i + 4, _mm256_sub_pd(_mm256_loadu_pd(a + i + 4), _mm256_loadu_pd(b + i + 4)));
+    }
+    for (; i + 4 <= n; i += 4) {
+        _mm256_storeu_pd(out + i, _mm256_sub_pd(_mm256_loadu_pd(a + i), _mm256_loadu_pd(b + i)));
+    }
+    for (; i < n; i++) out[i] = a[i] - b[i];
+}
+
+GRX_TARGET_AVX2
+static void grx_mul_avx2(const double *a, const double *b, double *out, size_t n) {
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        _mm256_storeu_pd(out + i,     _mm256_mul_pd(_mm256_loadu_pd(a + i),     _mm256_loadu_pd(b + i)));
+        _mm256_storeu_pd(out + i + 4, _mm256_mul_pd(_mm256_loadu_pd(a + i + 4), _mm256_loadu_pd(b + i + 4)));
+    }
+    for (; i + 4 <= n; i += 4) {
+        _mm256_storeu_pd(out + i, _mm256_mul_pd(_mm256_loadu_pd(a + i), _mm256_loadu_pd(b + i)));
+    }
+    for (; i < n; i++) out[i] = a[i] * b[i];
+}
+
+GRX_TARGET_AVX2
+static void grx_div_avx2(const double *a, const double *b, double *out, size_t n) {
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        _mm256_storeu_pd(out + i,     _mm256_div_pd(_mm256_loadu_pd(a + i),     _mm256_loadu_pd(b + i)));
+        _mm256_storeu_pd(out + i + 4, _mm256_div_pd(_mm256_loadu_pd(a + i + 4), _mm256_loadu_pd(b + i + 4)));
+    }
+    for (; i + 4 <= n; i += 4) {
+        _mm256_storeu_pd(out + i, _mm256_div_pd(_mm256_loadu_pd(a + i), _mm256_loadu_pd(b + i)));
+    }
+    for (; i < n; i++) out[i] = a[i] / b[i];
+}
+
+GRX_TARGET_AVX2
+static void grx_scale_avx2(const double *a, double s, double *out, size_t n) {
+    __m256d vs = _mm256_set1_pd(s);
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        _mm256_storeu_pd(out + i,     _mm256_mul_pd(_mm256_loadu_pd(a + i), vs));
+        _mm256_storeu_pd(out + i + 4, _mm256_mul_pd(_mm256_loadu_pd(a + i + 4), vs));
+    }
+    for (; i + 4 <= n; i += 4) {
+        _mm256_storeu_pd(out + i, _mm256_mul_pd(_mm256_loadu_pd(a + i), vs));
+    }
+    for (; i < n; i++) out[i] = a[i] * s;
+}
+
+GRX_TARGET_AVX2
+static void grx_add_scalar_avx2(const double *a, double s, double *out, size_t n) {
+    __m256d vs = _mm256_set1_pd(s);
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        _mm256_storeu_pd(out + i,     _mm256_add_pd(_mm256_loadu_pd(a + i), vs));
+        _mm256_storeu_pd(out + i + 4, _mm256_add_pd(_mm256_loadu_pd(a + i + 4), vs));
+    }
+    for (; i + 4 <= n; i += 4) {
+        _mm256_storeu_pd(out + i, _mm256_add_pd(_mm256_loadu_pd(a + i), vs));
+    }
+    for (; i < n; i++) out[i] = a[i] + s;
+}
+
+GRX_TARGET_AVX2
+static double grx_sum_avx2(const double *a, size_t n) {
+    __m256d v0 = _mm256_setzero_pd(), v1 = _mm256_setzero_pd();
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        v0 = _mm256_add_pd(v0, _mm256_loadu_pd(a + i));
+        v1 = _mm256_add_pd(v1, _mm256_loadu_pd(a + i + 4));
+    }
+    v0 = _mm256_add_pd(v0, v1);
+    for (; i + 4 <= n; i += 4) {
+        v0 = _mm256_add_pd(v0, _mm256_loadu_pd(a + i));
+    }
+    double tmp[4];
+    _mm256_storeu_pd(tmp, v0);
+    double acc = tmp[0] + tmp[1] + tmp[2] + tmp[3];
+    for (; i < n; i++) acc += a[i];
+    return acc;
+}
+
+GRX_TARGET_AVX2
+static double grx_dot_avx2(const double *a, const double *b, size_t n) {
+    __m256d acc0 = _mm256_setzero_pd(), acc1 = _mm256_setzero_pd();
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        acc0 = _mm256_fmadd_pd(_mm256_loadu_pd(a + i),     _mm256_loadu_pd(b + i),     acc0);
+        acc1 = _mm256_fmadd_pd(_mm256_loadu_pd(a + i + 4), _mm256_loadu_pd(b + i + 4), acc1);
+    }
+    acc0 = _mm256_add_pd(acc0, acc1);
+    for (; i + 4 <= n; i += 4) {
+        acc0 = _mm256_fmadd_pd(_mm256_loadu_pd(a + i), _mm256_loadu_pd(b + i), acc0);
+    }
+    double tmp[4];
+    _mm256_storeu_pd(tmp, acc0);
+    double sum = tmp[0] + tmp[1] + tmp[2] + tmp[3];
+    for (; i < n; i++) sum += a[i] * b[i];
+    return sum;
+}
+
+GRX_TARGET_AVX2
+static void grx_relu_avx2(const double *a, double *out, size_t n) {
+    __m256d zero = _mm256_setzero_pd();
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        _mm256_storeu_pd(out + i,     _mm256_max_pd(_mm256_loadu_pd(a + i), zero));
+        _mm256_storeu_pd(out + i + 4, _mm256_max_pd(_mm256_loadu_pd(a + i + 4), zero));
+    }
+    for (; i + 4 <= n; i += 4) {
+        _mm256_storeu_pd(out + i, _mm256_max_pd(_mm256_loadu_pd(a + i), zero));
+    }
+    for (; i < n; i++) out[i] = a[i] > 0.0 ? a[i] : 0.0;
+}
+
+GRX_TARGET_AVX2
+static void grx_adam_step_avx2(double *param, double *m, double *v,
+                               const double *grad, double lr,
+                               double beta1, double beta2, double epsilon,
+                               double beta1t, double beta2t, size_t n) {
+    __m256d vb1   = _mm256_set1_pd(beta1);
+    __m256d vb2   = _mm256_set1_pd(beta2);
+    __m256d vom1  = _mm256_set1_pd(1.0 - beta1);
+    __m256d vom2  = _mm256_set1_pd(1.0 - beta2);
+    __m256d vcb1  = _mm256_set1_pd(1.0 / (1.0 - beta1t));
+    __m256d vcb2  = _mm256_set1_pd(1.0 / (1.0 - beta2t));
+    __m256d vlr   = _mm256_set1_pd(lr);
+    __m256d veps  = _mm256_set1_pd(epsilon);
+
+    size_t i = 0;
+    for (; i + 4 <= n; i += 4) {
+        __m256d g   = _mm256_loadu_pd(grad + i);
+        __m256d mi  = _mm256_loadu_pd(m + i);
+        __m256d vi  = _mm256_loadu_pd(v + i);
+        __m256d p   = _mm256_loadu_pd(param + i);
+
+        mi = _mm256_fmadd_pd(vb1, mi, _mm256_mul_pd(vom1, g));
+        vi = _mm256_fmadd_pd(vb2, vi, _mm256_mul_pd(vom2, _mm256_mul_pd(g, g)));
+
+        _mm256_storeu_pd(m + i, mi);
+        _mm256_storeu_pd(v + i, vi);
+
+        __m256d m_hat = _mm256_mul_pd(mi, vcb1);
+        __m256d v_hat = _mm256_mul_pd(vi, vcb2);
+        __m256d denom = _mm256_add_pd(_mm256_sqrt_pd(v_hat), veps);
+        __m256d step  = _mm256_div_pd(_mm256_mul_pd(vlr, m_hat), denom);
+
+        _mm256_storeu_pd(param + i, _mm256_sub_pd(p, step));
+    }
+
+    double cb1 = 1.0 / (1.0 - beta1t);
+    double cb2 = 1.0 / (1.0 - beta2t);
+    for (; i < n; i++) {
+        double g = grad[i];
+        m[i] = beta1 * m[i] + (1.0 - beta1) * g;
+        v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
+        double m_hat = m[i] * cb1;
+        double v_hat = v[i] * cb2;
+        param[i] -= lr * m_hat / (sqrt(v_hat) + epsilon);
+    }
+}
+
+#endif /* GCC / Clang */
 
 /* ================================================================
- * ELEMENT-WISE ARITMÉTICA
+ * FUNCIONES PUBLICAS CON DESPACHO DINAMICO
  * ================================================================ */
 
-#define BINOP_BODY(op_avx, op_scalar)                                   \
-    size_t i = 0;                                                        \
-    for (; i + 8 <= n; i += 8) {                                        \
-        VST(out+i,   op_avx(VLD(a+i),   VLD(b+i)));                    \
-        VST(out+i+4, op_avx(VLD(a+i+4), VLD(b+i+4)));                  \
-    }                                                                    \
-    for (; i + 4 <= n; i += 4) VST(out+i, op_avx(VLD(a+i), VLD(b+i)));\
-    for (; i < n; i++) out[i] = op_scalar(a[i], b[i]);
-
-#define SCALAR_ADD(x,y) ((x)+(y))
-#define SCALAR_SUB(x,y) ((x)-(y))
-#define SCALAR_MUL(x,y) ((x)*(y))
-#define SCALAR_DIV(x,y) ((x)/(y))
-
-GRX_API void grx_add(const double * restrict a, const double * restrict b,
-                     double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    BINOP_BODY(_mm256_add_pd, SCALAR_ADD)
-#else
+GRX_API void grx_add(const double *a, const double *b, double *out, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        grx_add_avx2(a, b, out, n);
+        return;
+    }
+#endif
     for (size_t i = 0; i < n; i++) out[i] = a[i] + b[i];
-#endif
 }
 
-GRX_API void grx_sub(const double * restrict a, const double * restrict b,
-                     double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    BINOP_BODY(_mm256_sub_pd, SCALAR_SUB)
-#else
+GRX_API void grx_sub(const double *a, const double *b, double *out, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        grx_sub_avx2(a, b, out, n);
+        return;
+    }
+#endif
     for (size_t i = 0; i < n; i++) out[i] = a[i] - b[i];
-#endif
 }
 
-GRX_API void grx_mul(const double * restrict a, const double * restrict b,
-                     double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    BINOP_BODY(_mm256_mul_pd, SCALAR_MUL)
-#else
+GRX_API void grx_mul(const double *a, const double *b, double *out, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        grx_mul_avx2(a, b, out, n);
+        return;
+    }
+#endif
     for (size_t i = 0; i < n; i++) out[i] = a[i] * b[i];
-#endif
 }
 
-GRX_API void grx_div(const double * restrict a, const double * restrict b,
-                     double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    BINOP_BODY(_mm256_div_pd, SCALAR_DIV)
-#else
+GRX_API void grx_div(const double *a, const double *b, double *out, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        grx_div_avx2(a, b, out, n);
+        return;
+    }
+#endif
     for (size_t i = 0; i < n; i++) out[i] = a[i] / b[i];
-#endif
 }
 
-GRX_API void grx_scale(const double * restrict a, double s,
-                       double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    __m256d vs = _mm256_set1_pd(s);
-    size_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        VST(out+i,   _mm256_mul_pd(VLD(a+i),   vs));
-        VST(out+i+4, _mm256_mul_pd(VLD(a+i+4), vs));
+GRX_API void grx_scale(const double *a, double s, double *out, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        grx_scale_avx2(a, s, out, n);
+        return;
     }
-    for (; i + 4 <= n; i += 4) VST(out+i, _mm256_mul_pd(VLD(a+i), vs));
-    for (; i < n; i++) out[i] = a[i] * s;
-#else
+#endif
     for (size_t i = 0; i < n; i++) out[i] = a[i] * s;
-#endif
 }
 
-GRX_API void grx_add_scalar(const double * restrict a, double s,
-                             double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    __m256d vs = _mm256_set1_pd(s);
-    size_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        VST(out+i,   _mm256_add_pd(VLD(a+i),   vs));
-        VST(out+i+4, _mm256_add_pd(VLD(a+i+4), vs));
+GRX_API void grx_add_scalar(const double *a, double s, double *out, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        grx_add_scalar_avx2(a, s, out, n);
+        return;
     }
-    for (; i + 4 <= n; i += 4) VST(out+i, _mm256_add_pd(VLD(a+i), vs));
-    for (; i < n; i++) out[i] = a[i] + s;
-#else
-    for (size_t i = 0; i < n; i++) out[i] = a[i] + s;
 #endif
+    for (size_t i = 0; i < n; i++) out[i] = a[i] + s;
 }
 
-GRX_API void grx_negate(const double * restrict a, double * restrict out, size_t n) {
+GRX_API void grx_negate(const double *a, double *out, size_t n) {
     grx_scale(a, -1.0, out, n);
 }
 
 /* ================================================================
- * MATEMÁTICAS ELEMENT-WISE
+ * MATEMATICAS ELEMENT-WISE
  * ================================================================ */
 
-GRX_API void grx_abs(const double * restrict a, double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    /* Máscara para limpiar el bit de signo (AND con 0x7FFFFFFFFFFFFFFF) */
-    __m256d mask = _mm256_castsi256_pd(
-        _mm256_set1_epi64x(0x7FFFFFFFFFFFFFFFLL));
-    size_t i = 0;
-    for (; i + 4 <= n; i += 4)
-        VST(out+i, _mm256_and_pd(VLD(a+i), mask));
-    for (; i < n; i++) out[i] = fabs(a[i]);
-#else
+GRX_API void grx_abs(const double *a, double *out, size_t n) {
     for (size_t i = 0; i < n; i++) out[i] = fabs(a[i]);
-#endif
 }
 
-GRX_API void grx_sqrt(const double * restrict a, double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    size_t i = 0;
-    for (; i + 4 <= n; i += 4)
-        VST(out+i, _mm256_sqrt_pd(VLD(a+i)));
-    for (; i < n; i++) out[i] = sqrt(a[i]);
-#else
+GRX_API void grx_sqrt(const double *a, double *out, size_t n) {
     for (size_t i = 0; i < n; i++) out[i] = sqrt(a[i]);
-#endif
 }
 
-GRX_API void grx_square(const double * restrict a, double * restrict out, size_t n) {
+GRX_API void grx_square(const double *a, double *out, size_t n) {
     grx_mul(a, a, out, n);
 }
 
-GRX_API void grx_log(const double * restrict a, double * restrict out, size_t n) {
-    /* log no tiene intrínseco SIMD estándar; -ffast-math + -march=native
-     * permite al compilador auto-vectorizar con SVML si está disponible */
+GRX_API void grx_log(const double *a, double *out, size_t n) {
     for (size_t i = 0; i < n; i++) out[i] = log(a[i]);
 }
 
-GRX_API void grx_exp(const double * restrict a, double * restrict out, size_t n) {
+GRX_API void grx_exp(const double *a, double *out, size_t n) {
     for (size_t i = 0; i < n; i++) out[i] = exp(a[i]);
 }
 
-GRX_API void grx_pow(const double * restrict a, double e,
-                     double * restrict out, size_t n) {
+GRX_API void grx_pow(const double *a, double e, double *out, size_t n) {
     for (size_t i = 0; i < n; i++) out[i] = pow(a[i], e);
 }
 
-GRX_API void grx_clip(const double * restrict a, double lo, double hi,
-                      double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    __m256d vlo = _mm256_set1_pd(lo);
-    __m256d vhi = _mm256_set1_pd(hi);
-    size_t i = 0;
-    for (; i + 4 <= n; i += 4)
-        VST(out+i, _mm256_min_pd(_mm256_max_pd(VLD(a+i), vlo), vhi));
-    for (; i < n; i++) out[i] = a[i] < lo ? lo : (a[i] > hi ? hi : a[i]);
-#else
-    for (size_t i = 0; i < n; i++)
-        out[i] = a[i] < lo ? lo : (a[i] > hi ? hi : a[i]);
-#endif
+GRX_API void grx_clip(const double *a, double lo, double hi, double *out, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        double v = a[i];
+        out[i] = (v < lo) ? lo : ((v > hi) ? hi : v);
+    }
 }
 
 /* ================================================================
  * REDUCCIONES
  * ================================================================ */
 
-GRX_API double grx_sum(const double * restrict a, size_t n) {
-    double acc = 0.0;
-#ifdef GRX_AVX2_FMA
-    __m256d v0 = _mm256_setzero_pd(), v1 = _mm256_setzero_pd();
-    size_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        v0 = _mm256_add_pd(v0, VLD(a+i));
-        v1 = _mm256_add_pd(v1, VLD(a+i+4));
+GRX_API double grx_sum(const double *a, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        return grx_sum_avx2(a, n);
     }
-    v0 = _mm256_add_pd(v0, v1);
-    for (; i + 4 <= n; i += 4) v0 = _mm256_add_pd(v0, VLD(a+i));
-    double tmp[4]; _mm256_store_pd(tmp, v0);
-    acc = tmp[0] + tmp[1] + tmp[2] + tmp[3];
-    for (; i < n; i++) acc += a[i];
-#elif defined(GRX_AVX2)
-    __m256d vacc = _mm256_setzero_pd();
-    size_t i = 0;
-    for (; i + 4 <= n; i += 4) vacc = _mm256_add_pd(vacc, VLD(a+i));
-    double tmp[4]; _mm256_storeu_pd(tmp, vacc);
-    acc = tmp[0] + tmp[1] + tmp[2] + tmp[3];
-    for (; i < n; i++) acc += a[i];
-#else
-    for (size_t i = 0; i < n; i++) acc += a[i];
 #endif
+    double acc = 0.0;
+    for (size_t i = 0; i < n; i++) acc += a[i];
     return acc;
 }
 
-GRX_API double grx_mean(const double * restrict a, size_t n) {
-    return n > 0 ? grx_sum(a, n) / (double)n : 0.0;
+GRX_API double grx_mean(const double *a, size_t n) {
+    if (n == 0) return 0.0;
+    return grx_sum(a, n) / (double)n;
 }
 
-GRX_API double grx_max(const double * restrict a, size_t n) {
-    if (n == 0) return -DBL_MAX;
+GRX_API double grx_max(const double *a, size_t n) {
+    if (n == 0) return 0.0;
     double m = a[0];
-    for (size_t i = 1; i < n; i++) if (a[i] > m) m = a[i];
+    for (size_t i = 1; i < n; i++) {
+        if (a[i] > m) m = a[i];
+    }
     return m;
 }
 
-GRX_API double grx_min(const double * restrict a, size_t n) {
-    if (n == 0) return DBL_MAX;
+GRX_API double grx_min(const double *a, size_t n) {
+    if (n == 0) return 0.0;
     double m = a[0];
-    for (size_t i = 1; i < n; i++) if (a[i] < m) m = a[i];
+    for (size_t i = 1; i < n; i++) {
+        if (a[i] < m) m = a[i];
+    }
     return m;
 }
 
 /* ================================================================
- * ÁLGEBRA LINEAL
+ * ALGEBRA LINEAL
  * ================================================================ */
 
-GRX_API double grx_dot(const double * restrict a, const double * restrict b, size_t n) {
-    double acc = 0.0;
-#ifdef GRX_AVX2_FMA
-    __m256d v0 = _mm256_setzero_pd(), v1 = _mm256_setzero_pd();
-    size_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        v0 = _mm256_fmadd_pd(VLD(a+i),   VLD(b+i),   v0);
-        v1 = _mm256_fmadd_pd(VLD(a+i+4), VLD(b+i+4), v1);
+GRX_API double grx_dot(const double *a, const double *b, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        return grx_dot_avx2(a, b, n);
     }
-    v0 = _mm256_add_pd(v0, v1);
-    for (; i + 4 <= n; i += 4) v0 = _mm256_fmadd_pd(VLD(a+i), VLD(b+i), v0);
-    double tmp[4]; _mm256_store_pd(tmp, v0);
-    acc = tmp[0] + tmp[1] + tmp[2] + tmp[3];
-    for (; i < n; i++) acc += a[i] * b[i];
-#elif defined(GRX_AVX2)
-    __m256d vacc = _mm256_setzero_pd();
-    size_t i = 0;
-    for (; i + 4 <= n; i += 4)
-        vacc = _mm256_add_pd(vacc, _mm256_mul_pd(VLD(a+i), VLD(b+i)));
-    double tmp[4]; _mm256_storeu_pd(tmp, vacc);
-    acc = tmp[0] + tmp[1] + tmp[2] + tmp[3];
-    for (; i < n; i++) acc += a[i] * b[i];
-#else
-    for (size_t i = 0; i < n; i++) acc += a[i] * b[i];
 #endif
+    double acc = 0.0;
+    for (size_t i = 0; i < n; i++) acc += a[i] * b[i];
     return acc;
 }
 
-/* matmul con tiling cache-friendly */
-GRX_API void grx_matmul(const double * restrict a, const double * restrict b,
-                        double * restrict out, size_t M, size_t K, size_t N) {
+GRX_API void grx_matmul(const double *a, const double *b, double *out,
+                        size_t M, size_t K, size_t N) {
     memset(out, 0, M * N * sizeof(double));
-    for (size_t ii = 0; ii < M; ii += TILE) {
-        size_t ie = ii + TILE < M ? ii + TILE : M;
-        for (size_t kk = 0; kk < K; kk += TILE) {
-            size_t ke = kk + TILE < K ? kk + TILE : K;
-            for (size_t jj = 0; jj < N; jj += TILE) {
-                size_t je = jj + TILE < N ? jj + TILE : N;
-                for (size_t i = ii; i < ie; i++)
-                    for (size_t k = kk; k < ke; k++) {
-                        double aik = a[i*K+k];
-                        for (size_t j = jj; j < je; j++)
-                            out[i*N+j] += aik * b[k*N+j];
+
+    /* Multiplicacion de matrices optimizada por bloques con cache tiling */
+    for (size_t bi = 0; bi < M; bi += TILE) {
+        size_t imax = bi + TILE < M ? bi + TILE : M;
+        for (size_t bk = 0; bk < K; bk += TILE) {
+            size_t kmax = bk + TILE < K ? bk + TILE : K;
+            for (size_t bj = 0; bj < N; bj += TILE) {
+                size_t jmax = bj + TILE < N ? bj + TILE : N;
+
+                for (size_t i = bi; i < imax; i++) {
+                    for (size_t k = bk; k < kmax; k++) {
+                        double a_ik = a[i * K + k];
+                        double *out_i = out + i * N;
+                        const double *b_k = b + k * N;
+                        for (size_t j = bj; j < jmax; j++) {
+                            out_i[j] += a_ik * b_k[j];
+                        }
                     }
+                }
             }
         }
     }
@@ -333,166 +466,111 @@ GRX_API void grx_matmul(const double * restrict a, const double * restrict b,
  * ACTIVACIONES
  * ================================================================ */
 
-GRX_API void grx_relu(const double * restrict a, double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    __m256d vz = _mm256_setzero_pd();
-    size_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        VST(out+i,   _mm256_max_pd(VLD(a+i),   vz));
-        VST(out+i+4, _mm256_max_pd(VLD(a+i+4), vz));
+GRX_API void grx_relu(const double *a, double *out, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        grx_relu_avx2(a, out, n);
+        return;
     }
-    for (; i + 4 <= n; i += 4) VST(out+i, _mm256_max_pd(VLD(a+i), vz));
-    for (; i < n; i++) out[i] = a[i] > 0.0 ? a[i] : 0.0;
-#else
+#endif
     for (size_t i = 0; i < n; i++) out[i] = a[i] > 0.0 ? a[i] : 0.0;
-#endif
 }
 
-GRX_API void grx_leaky_relu(const double * restrict a, double alpha,
-                             double * restrict out, size_t n) {
-#if defined(GRX_AVX2_FMA) || defined(GRX_AVX2)
-    __m256d va = _mm256_set1_pd(alpha);
-    __m256d vz = _mm256_setzero_pd();
-    size_t i = 0;
-    for (; i + 4 <= n; i += 4) {
-        __m256d v = VLD(a+i);
-        /* max(v, alpha*v): si v>0 → v, si v<=0 → alpha*v */
-        VST(out+i, _mm256_blendv_pd(_mm256_mul_pd(v, va), v,
-                                     _mm256_cmp_pd(v, vz, _CMP_GT_OQ)));
+GRX_API void grx_leaky_relu(const double *a, double alpha, double *out, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        double v = a[i];
+        out[i] = v >= 0.0 ? v : alpha * v;
     }
-    for (; i < n; i++) out[i] = a[i] > 0.0 ? a[i] : alpha * a[i];
-#else
-    for (size_t i = 0; i < n; i++) out[i] = a[i] > 0.0 ? a[i] : alpha * a[i];
-#endif
 }
 
-GRX_API void grx_tanh_act(const double * restrict a, double * restrict out, size_t n) {
+GRX_API void grx_tanh_act(const double *a, double *out, size_t n) {
     for (size_t i = 0; i < n; i++) out[i] = tanh(a[i]);
 }
 
-GRX_API void grx_sigmoid(const double * restrict a, double * restrict out, size_t n) {
-    for (size_t i = 0; i < n; i++) out[i] = 1.0 / (1.0 + exp(-a[i]));
+GRX_API void grx_sigmoid(const double *a, double *out, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        double v = a[i];
+        if (v >= 0.0) {
+            double ev = exp(-v);
+            out[i] = 1.0 / (1.0 + ev);
+        } else {
+            double ev = exp(v);
+            out[i] = ev / (1.0 + ev);
+        }
+    }
 }
 
-GRX_API void grx_softmax(const double * restrict a, double * restrict out, size_t n) {
-    double max_val = grx_max(a, n);
+GRX_API void grx_softmax(const double *a, double *out, size_t n) {
+    if (n == 0) return;
+    double max_v = a[0];
+    for (size_t i = 1; i < n; i++) {
+        if (a[i] > max_v) max_v = a[i];
+    }
     double sum = 0.0;
-    for (size_t i = 0; i < n; i++) { out[i] = exp(a[i] - max_val); sum += out[i]; }
+    for (size_t i = 0; i < n; i++) {
+        double ev = exp(a[i] - max_v);
+        out[i] = ev;
+        sum += ev;
+    }
     double inv = 1.0 / sum;
     for (size_t i = 0; i < n; i++) out[i] *= inv;
 }
 
 /* ================================================================
- * OPTIMIZADORES (in-place sobre parámetros)
+ * OPTIMIZADORES IN-PLACE
  * ================================================================ */
 
-/* SGD: param[i] -= lr * grad[i] */
-GRX_API void grx_sgd_step(double * restrict param, const double * restrict grad,
-                           double lr, size_t n) {
-#ifdef GRX_AVX2_FMA
-    __m256d vlr = _mm256_set1_pd(lr);
-    size_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        /* param -= lr * grad  usando FMA: param = -lr*grad + param */
-        VST(param+i,   _mm256_fnmadd_pd(vlr, VLD(grad+i),   VLD(param+i)));
-        VST(param+i+4, _mm256_fnmadd_pd(vlr, VLD(grad+i+4), VLD(param+i+4)));
+GRX_API void grx_sgd_step(double *param, const double *grad,
+                          double lr, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        param[i] -= lr * grad[i];
     }
-    for (; i + 4 <= n; i += 4)
-        VST(param+i, _mm256_fnmadd_pd(vlr, VLD(grad+i), VLD(param+i)));
-    for (; i < n; i++) param[i] -= lr * grad[i];
-#else
-    for (size_t i = 0; i < n; i++) param[i] -= lr * grad[i];
-#endif
 }
 
-/*
- * Adam: Kingma & Ba 2015
- *   m = beta1*m + (1-beta1)*grad
- *   v = beta2*v + (1-beta2)*grad^2
- *   m_hat = m / (1 - beta1^t)
- *   v_hat = v / (1 - beta2^t)
- *   param -= lr * m_hat / (sqrt(v_hat) + eps)
- *
- * beta1t = beta1^t (pasado desde Ruby, se actualiza por paso)
- * beta2t = beta2^t
- */
-GRX_API void grx_adam_step(double * restrict param,
-                            double * restrict m, double * restrict v,
-                            const double * restrict grad,
-                            double lr, double beta1, double beta2,
-                            double epsilon, double beta1t, double beta2t,
-                            size_t n) {
-    double one_m_b1 = 1.0 - beta1;
-    double one_m_b2 = 1.0 - beta2;
-    double inv_1mb1t = 1.0 / (1.0 - beta1t);
-    double inv_1mb2t = 1.0 / (1.0 - beta2t);
-
-#ifdef GRX_AVX2_FMA
-    __m256d vb1    = _mm256_set1_pd(beta1);
-    __m256d vb2    = _mm256_set1_pd(beta2);
-    __m256d v1mb1  = _mm256_set1_pd(one_m_b1);
-    __m256d v1mb2  = _mm256_set1_pd(one_m_b2);
-    __m256d vlr    = _mm256_set1_pd(lr);
-    __m256d veps   = _mm256_set1_pd(epsilon);
-    __m256d vi1b1t = _mm256_set1_pd(inv_1mb1t);
-    __m256d vi2b2t = _mm256_set1_pd(inv_1mb2t);
-
-    size_t i = 0;
-    for (; i + 4 <= n; i += 4) {
-        __m256d g  = VLD(grad+i);
-        /* m = beta1*m + (1-beta1)*g */
-        __m256d mi = _mm256_fmadd_pd(vb1, VLD(m+i), _mm256_mul_pd(v1mb1, g));
-        /* v = beta2*v + (1-beta2)*g^2 */
-        __m256d vi = _mm256_fmadd_pd(vb2, VLD(v+i),
-                         _mm256_mul_pd(v1mb2, _mm256_mul_pd(g, g)));
-        VST(m+i, mi);
-        VST(v+i, vi);
-        /* m_hat = m / (1-beta1^t),  v_hat = v / (1-beta2^t) */
-        __m256d mh = _mm256_mul_pd(mi, vi1b1t);
-        __m256d vh = _mm256_mul_pd(vi, vi2b2t);
-        /* param -= lr * mh / (sqrt(vh) + eps) */
-        __m256d denom = _mm256_add_pd(_mm256_sqrt_pd(vh), veps);
-        VST(param+i, _mm256_fnmadd_pd(vlr, _mm256_div_pd(mh, denom), VLD(param+i)));
-    }
-    for (; i < n; i++) {
-        m[i] = beta1 * m[i] + one_m_b1 * grad[i];
-        v[i] = beta2 * v[i] + one_m_b2 * grad[i] * grad[i];
-        double mh = m[i] * inv_1mb1t;
-        double vh = v[i] * inv_1mb2t;
-        param[i] -= lr * mh / (sqrt(vh) + epsilon);
-    }
-#else
-    for (size_t i = 0; i < n; i++) {
-        m[i] = beta1 * m[i] + one_m_b1 * grad[i];
-        v[i] = beta2 * v[i] + one_m_b2 * grad[i] * grad[i];
-        double mh = m[i] * inv_1mb1t;
-        double vh = v[i] * inv_1mb2t;
-        param[i] -= lr * mh / (sqrt(vh) + epsilon);
+GRX_API void grx_adam_step(double *param, double *m, double *v,
+                           const double *grad, double lr,
+                           double beta1, double beta2, double epsilon,
+                           double beta1t, double beta2t, size_t n) {
+#if defined(__GNUC__) || defined(__clang__)
+    if (grx_detect_simd() >= 2) {
+        grx_adam_step_avx2(param, m, v, grad, lr, beta1, beta2, epsilon, beta1t, beta2t, n);
+        return;
     }
 #endif
+    double cb1 = 1.0 / (1.0 - beta1t);
+    double cb2 = 1.0 / (1.0 - beta2t);
+    for (size_t i = 0; i < n; i++) {
+        double g = grad[i];
+        m[i] = beta1 * m[i] + (1.0 - beta1) * g;
+        v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
+        double m_hat = m[i] * cb1;
+        double v_hat = v[i] * cb2;
+        param[i] -= lr * m_hat / (sqrt(v_hat) + epsilon);
+    }
 }
 
 /* ================================================================
- * INICIALIZACIÓN DE PESOS
+ * INICIALIZACION DE PESOS
  * ================================================================ */
 
-/* LCG simple (no criptográfico, pero rápido y sin dependencias) */
 static uint64_t grx_rng_state = 0;
 
 static void grx_rng_seed(void) {
-    grx_rng_state = (uint64_t)time(NULL) ^ (uint64_t)(uintptr_t)&grx_rng_state;
+    if (grx_rng_state == 0) {
+        grx_rng_state = (uint64_t)time(NULL) ^ (uint64_t)(uintptr_t)&grx_rng_state ^ 0x853c49e6748fea9bULL;
+        if (grx_rng_state == 0) grx_rng_state = 1;
+    }
 }
 
-/* Genera double uniforme en [0, 1) */
+/* Generador xorshift64* puramente escalar y universal */
 static double grx_rand01(void) {
-    /* xorshift64 */
     grx_rng_state ^= grx_rng_state << 13;
     grx_rng_state ^= grx_rng_state >> 7;
     grx_rng_state ^= grx_rng_state << 17;
-    return (double)(grx_rng_state >> 11) / (double)(1ULL << 53);
+    uint64_t val = grx_rng_state * 0x2545F4914F6CDD1DULL;
+    return (double)(val >> 11) * (1.0 / 9007199254740992.0); /* 2^53 */
 }
 
-/* Box-Muller: genera par de normales N(0,1) */
 static void grx_box_muller(double *z0, double *z1) {
     double u1, u2;
     do { u1 = grx_rand01(); } while (u1 < 1e-15);
@@ -503,16 +581,17 @@ static void grx_box_muller(double *z0, double *z1) {
 }
 
 GRX_API void grx_init_xavier_uniform(double *out, size_t n,
-                                      size_t fan_in, size_t fan_out) {
+                                     size_t fan_in, size_t fan_out) {
     grx_rng_seed();
     double limit = sqrt(6.0 / (double)(fan_in + fan_out));
-    for (size_t i = 0; i < n; i++)
+    for (size_t i = 0; i < n; i++) {
         out[i] = (grx_rand01() * 2.0 - 1.0) * limit;
+    }
 }
 
 GRX_API void grx_init_he_normal(double *out, size_t n, size_t fan_in) {
     grx_rng_seed();
-    double std = sqrt(2.0 / (double)fan_in);
+    double std = sqrt(2.0 / (double)(fan_in > 0 ? fan_in : 1));
     size_t i = 0;
     for (; i + 1 < n; i += 2) {
         double z0, z1;
@@ -527,8 +606,9 @@ GRX_API void grx_init_he_normal(double *out, size_t n, size_t fan_in) {
     }
 }
 
-/* ============================================================
- * RUBY EXTENSION INIT — requerido por rake-compiler / mkmf
- * No hace nada: la librería se carga vía Fiddle, no como extensión Ruby nativa.
- * ============================================================ */
-void Init_grx_core(void) { /* no-op */ }
+/* ================================================================
+ * RUBY EXTENSION ENTRYPOINT
+ * ================================================================ */
+GRX_API void Init_grx_core(void) {
+    grx_detect_simd();
+}

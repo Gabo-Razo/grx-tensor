@@ -11,8 +11,9 @@ Gem::Specification.new do |spec|
   spec.summary       = "Tensor framework for Ruby with autograd and a C+SIMD compute core"
   spec.description   = <<~DESC
     GRX brings PyTorch-style tensor operations to Ruby. Every arithmetic op,
-    activation, and optimizer step runs through a native C library compiled
-    with AVX2+FMA SIMD. Ruby is the interface — C does the work.
+    activation, and optimizer step runs through a native C library with
+    dynamic multi-target SIMD dispatch (AVX2+FMA, SSE, and scalar fallback).
+    Ruby is the interface — C does the work.
 
     Features: autograd, SGD/Adam optimizers, Linear/Sequential/Dropout/BatchNorm
     layers, MSE/BCE/CrossEntropy loss functions, Xavier and He weight init.
@@ -45,41 +46,44 @@ Gem::Specification.new do |spec|
 
   spec.require_paths = ["lib"]
 
-  # rake-compiler compiles ext/grx/extconf.rb on `gem install`
+  # rake-compiler / rubygems compiles ext/grx/extconf.rb on `gem install`
   spec.extensions = ["ext/grx/extconf.rb"]
 
   spec.post_install_message = <<~MSG
 
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      GRX-Tensor #{GRX::VERSION} installed
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ============================================================
+      GRX-Tensor #{GRX::VERSION}
+    ============================================================
 
-    Compile the C extension to enable AVX2+FMA SIMD:
+      [ENGLISH]
+      Thank you for choosing and using GRX-Tensor!
 
-      Linux / macOS:  make -C ext/unix
-      Windows:        make -C ext/windows -f Makefile.mingw
+      * Native C acceleration with dynamic SIMD dispatch
+        (AVX2+FMA, SSE, and portable scalar C) is built and
+        configured automatically.
+      * Windows Note: Native C acceleration is supported when
+        using RubyInstaller with DevKit (MSYS2 / MinGW-w64).
+        Standalone pre-compiled Windows binaries are currently
+        in active development.
+      * Documentation, guides, and tutorials:
+        https://github.com/Gabo-Razo/grx-tensor
 
-    Without it, GRX runs in pure Ruby fallback mode (slower but correct).
+      ----------------------------------------------------------
 
-    Quick start:
+      [ESPAÑOL]
+      Muchas gracias por elegir y utilizar GRX-Tensor!
 
-      require "grx"
+      * La aceleracion nativa en C con despacho dinamico SIMD
+        (AVX2+FMA, SSE y C escalar portable) se compila y
+        configura de forma totalmente automatica.
+      * Nota para Windows: La aceleracion nativa esta soportada
+        al utilizar RubyInstaller con DevKit (MSYS2 / MinGW-w64).
+        Los binarios pre-compilados independientes para Windows
+        se encuentran actualmente en desarrollo activo.
+      * Documentacion, guias y tutoriales:
+        https://github.com/Gabo-Razo/grx-tensor
 
-      a = GRX.tensor([1.0, 2.0, 3.0], [3], requires_grad: true)
-      b = GRX.tensor([4.0, 5.0, 6.0], [3], requires_grad: true)
-      c = a + b
-      c.backward
-      puts a.grad.to_a   # [1.0, 1.0, 1.0]
-
-      net = GRX::NN::Sequential.new(
-        GRX::NN::Linear.new(4, 16),
-        GRX::NN::ReLU.new,
-        GRX::NN::Linear.new(16, 1)
-      )
-      opt = GRX::Optim::Adam.new(net.parameters, lr: 0.001)
-
-    Docs: https://github.com/Gabo-Razo/grx-tensor
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ============================================================
 
   MSG
 

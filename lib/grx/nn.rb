@@ -147,8 +147,10 @@ module GRX
     end
 
     class LeakyReLU < Module
-      def initialize(alpha = 0.01)
-        @alpha = alpha
+      attr_reader :alpha
+
+      def initialize(alpha_arg = nil, alpha: nil)
+        @alpha = (alpha || alpha_arg || 0.01).to_f
       end
       def forward(x) = x.leaky_relu(@alpha)
       def to_s = "LeakyReLU(alpha=#{@alpha})"
@@ -242,10 +244,10 @@ module GRX
     class LayerNorm < Module
       attr_reader :gamma, :beta, :normalized_shape, :epsilon
 
-      def initialize(normalized_shape, epsilon: 1e-5)
+      def initialize(normalized_shape, eps: nil, epsilon: 1e-5)
         @normalized_shape = normalized_shape.is_a?(Array) ? normalized_shape : [normalized_shape]
         @dim              = @normalized_shape.reduce(1, :*)
-        @epsilon          = epsilon
+        @epsilon          = (eps || epsilon).to_f
 
         @gamma = Tensor.ones(@normalized_shape, requires_grad: true)
         @beta  = Tensor.zeros(@normalized_shape, requires_grad: true)
@@ -318,10 +320,10 @@ module GRX
     # BatchNorm1d — Normalizacion por batch
     # ================================================================
     class BatchNorm1d < Module
-      def initialize(num_features, epsilon: 1e-5, momentum: 0.1)
+      def initialize(num_features, eps: nil, epsilon: 1e-5, momentum: 0.1)
         @num_features = num_features
-        @epsilon      = epsilon
-        @momentum     = momentum
+        @epsilon      = (eps || epsilon).to_f
+        @momentum     = momentum.to_f
         @training     = true
 
         @gamma = Tensor.ones([num_features],  requires_grad: true)

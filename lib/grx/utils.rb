@@ -24,5 +24,20 @@ module GRX
       end
       total_norm
     end
+
+    # ================================================================
+    # one_hot — Generates a 2D One-Hot encoded Tensor from class indices
+    # ================================================================
+    def self.one_hot(indices, num_classes: nil, requires_grad: false)
+      ids = indices.is_a?(Tensor) ? indices.to_a.map(&:to_i) : Array(indices).map(&:to_i)
+      c = num_classes || (ids.empty? ? 0 : ids.max + 1)
+      n = ids.size
+      matrix_data = Array.new(n * c, 0.0)
+      ids.each_with_index do |class_id, row|
+        raise IndexError, "Class index #{class_id} out of bounds [0, #{c})" if class_id < 0 || class_id >= c
+        matrix_data[row * c + class_id] = 1.0
+      end
+      Tensor.create(matrix_data, [n, c], requires_grad: requires_grad)
+    end
   end
 end

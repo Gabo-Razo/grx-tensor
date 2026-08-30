@@ -54,14 +54,19 @@ module GRX
     # The standard optimizer for deep neural networks.
     # ================================================================
     class Adam
-      def initialize(params, lr: 0.001, beta1: 0.9, beta2: 0.999,
-                     epsilon: 1e-8, weight_decay: 0.0)
+      def initialize(params, lr: 0.001, betas: nil, beta1: 0.9, beta2: 0.999,
+                     eps: nil, epsilon: 1e-8, weight_decay: 0.0)
         @params       = params
-        @lr           = lr
-        @beta1        = beta1
-        @beta2        = beta2
-        @epsilon      = epsilon
-        @weight_decay = weight_decay
+        @lr           = lr.to_f
+        if betas
+          @beta1 = betas[0].to_f
+          @beta2 = betas[1].to_f
+        else
+          @beta1 = beta1.to_f
+          @beta2 = beta2.to_f
+        end
+        @epsilon      = eps ? eps.to_f : epsilon.to_f
+        @weight_decay = weight_decay.to_f
         @t            = 0  # current step
 
         # First and second order moment vectors (zero-initialized)

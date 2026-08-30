@@ -41,11 +41,12 @@ module GRX
     n = shape.reduce(1, :*)
     data = []
     (n / 2.0).ceil.times do
-      u1 = ::Kernel.rand; u1 = ::Kernel.rand while u1 < 1e-15
+      u1 = ::Kernel.rand
+      u1 = ::Kernel.rand while u1 < 1e-15
       u2 = ::Kernel.rand
       r  = Math.sqrt(-2.0 * Math.log(u1))
-      data << r * Math.cos(2 * Math::PI * u2)
-      data << r * Math.sin(2 * Math::PI * u2)
+      data << (r * Math.cos(2 * Math::PI * u2))
+      data << (r * Math.sin(2 * Math::PI * u2))
     end
     Tensor.create(data.first(n), shape, requires_grad: requires_grad)
   end
@@ -56,5 +57,9 @@ module GRX
 
   def self.mode
     CAPI::LOADED ? :c : :ruby
+  end
+
+  def self.simd_mode
+    CAPI.simd_mode
   end
 end

@@ -1,5 +1,8 @@
 /*
- * grx_core.h — API pública del núcleo C de GRX
+ * grx_core.h — API publica del nucleo C de GRX
+ * =============================================================
+ * Compatible con compilacion universal y despacho dinamico SIMD
+ * (AVX2 + FMA / SSE / Escalar C)
  * =============================================================
  */
 
@@ -18,20 +21,24 @@
 extern "C" {
 #endif
 
+/* ---- Diagnostico y nivel SIMD ----------------------------------- */
+/* Retorna 2 para AVX2+FMA, 1 para SSE, 0 para Escalar portable C */
+GRX_API int grx_simd_level(void);
+
 /* ---- Memoria alineada -------------------------------------------- */
 GRX_API double* grx_alloc(size_t n);
 GRX_API void    grx_free(double *ptr);
 
-/* ---- Element-wise aritmética ------------------------------------- */
-GRX_API void grx_add   (const double *a, const double *b, double *out, size_t n);
-GRX_API void grx_sub   (const double *a, const double *b, double *out, size_t n);
-GRX_API void grx_mul   (const double *a, const double *b, double *out, size_t n);
-GRX_API void grx_div   (const double *a, const double *b, double *out, size_t n);
-GRX_API void grx_scale (const double *a, double s,        double *out, size_t n);
-GRX_API void grx_negate(const double *a,                  double *out, size_t n);
-GRX_API void grx_add_scalar(const double *a, double s,    double *out, size_t n);
+/* ---- Element-wise aritmetica ------------------------------------- */
+GRX_API void grx_add       (const double *a, const double *b, double *out, size_t n);
+GRX_API void grx_sub       (const double *a, const double *b, double *out, size_t n);
+GRX_API void grx_mul       (const double *a, const double *b, double *out, size_t n);
+GRX_API void grx_div       (const double *a, const double *b, double *out, size_t n);
+GRX_API void grx_scale     (const double *a, double s,        double *out, size_t n);
+GRX_API void grx_negate    (const double *a,                  double *out, size_t n);
+GRX_API void grx_add_scalar(const double *a, double s,        double *out, size_t n);
 
-/* ---- Element-wise matemáticas ------------------------------------ */
+/* ---- Element-wise matematicas ------------------------------------ */
 GRX_API void grx_abs    (const double *a, double *out, size_t n);
 GRX_API void grx_sqrt   (const double *a, double *out, size_t n);
 GRX_API void grx_log    (const double *a, double *out, size_t n);
@@ -46,7 +53,7 @@ GRX_API double grx_mean(const double *a, size_t n);
 GRX_API double grx_max (const double *a, size_t n);
 GRX_API double grx_min (const double *a, size_t n);
 
-/* ---- Álgebra lineal ---------------------------------------------- */
+/* ---- Algebra lineal ---------------------------------------------- */
 GRX_API double grx_dot    (const double *a, const double *b, size_t n);
 GRX_API void   grx_matmul (const double *a, const double *b, double *out,
                             size_t M, size_t K, size_t N);
@@ -63,7 +70,7 @@ GRX_API void grx_softmax     (const double *a, double *out, size_t n);
 GRX_API void grx_sgd_step(double *param, const double *grad,
                            double lr, size_t n);
 
-/* Adam: actualiza param, m, v in-place */
+/* Adam: actualiza param, m, v in-place con aceleracion FMA */
 GRX_API void grx_adam_step(double *param,
                             double *m, double *v,
                             const double *grad,
@@ -71,12 +78,15 @@ GRX_API void grx_adam_step(double *param,
                             double epsilon, double beta1t, double beta2t,
                             size_t n);
 
-/* ---- Inicialización de pesos ------------------------------------- */
+/* ---- Inicializacion de pesos ------------------------------------- */
 /* Xavier uniform: U(-limit, limit), limit = sqrt(6 / (fan_in + fan_out)) */
 GRX_API void grx_init_xavier_uniform(double *out, size_t n,
                                       size_t fan_in, size_t fan_out);
 /* He normal: N(0, sqrt(2/fan_in)) */
 GRX_API void grx_init_he_normal(double *out, size_t n, size_t fan_in);
+
+/* Extension init for Ruby */
+GRX_API void Init_grx_core(void);
 
 #ifdef __cplusplus
 }

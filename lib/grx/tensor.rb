@@ -345,6 +345,34 @@ module GRX
       end
     end
 
+    def argmax
+      arr = to_a
+      return 0 if arr.empty?
+      max_idx = 0
+      max_val = arr[0]
+      (1...arr.size).each do |i|
+        if arr[i] > max_val
+          max_val = arr[i]
+          max_idx = i
+        end
+      end
+      max_idx
+    end
+
+    def argmin
+      arr = to_a
+      return 0 if arr.empty?
+      min_idx = 0
+      min_val = arr[0]
+      (1...arr.size).each do |i|
+        if arr[i] < min_val
+          min_val = arr[i]
+          min_idx = i
+        end
+      end
+      min_idx
+    end
+
     # ----------------------------------------------------------------
     # LINEAR ALGEBRA
     # ----------------------------------------------------------------
@@ -538,6 +566,10 @@ module GRX
       @storage.read(_calc_flat_index(coords))
     end
 
+    def set(*coords, val)
+      @storage.write(_calc_flat_index(coords), val.to_f)
+    end
+
     def contiguous
       return self if _contiguous?
       c = Tensor.create(to_a, @shape, requires_grad: @requires_grad)
@@ -612,6 +644,10 @@ module GRX
 
     def numel
       @shape.reduce(1, :*)
+    end
+
+    def rank
+      @shape.size
     end
 
     def to_a

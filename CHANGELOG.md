@@ -17,6 +17,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - `Conv2d`, `LSTM`, `MultiheadAttention` layers
 - CUDA extension (`grx-tensor-cuda`)
 
+## [0.2.1] - 2026-08-29
+
+### Fixed
+- **Illegal Instruction Crash Resolved (`SIGILL`)**: Removed forced global `-mavx2` compiler flags that produced opcode crashes on older Intel/AMD CPUs, VMs, and ARM architectures.
+- **Dynamic Multi-Target SIMD Dispatch**: Runtime CPU detection (`grx_simd_level`) dynamically selects between AVX2+FMA (4 doubles/cycle), SSE, or portable scalar C with zero overhead.
+- **Automated Native Compilation**: Extension builds seamlessly on `gem install grx-tensor` without requiring manual make invocations.
+- **Windows DevKit Support & Documentation**: Streamlined MinGW-w64 build path and clarified standalone binary progress.
+- **Post-Install Experience**: Clean dual-language (EN/ES) thank-you notice and direct repository documentation links.
+
 ---
 
 ## [0.2.0] - 2026-08-21
